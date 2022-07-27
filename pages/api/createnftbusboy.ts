@@ -3,6 +3,9 @@ import type { NextApiRequest, NextApiResponse } from 'next'
 import busboy from 'busboy';
 import sharp from 'sharp';
 import deploy from '../../lib/deploy';
+import fs from 'fs'
+import mkIPFS from '../../lib/ipfs';
+import setURI from '../../lib/setURI';
 
 type simpleParsedObj = { [idx: string]: string }
 type indexSignaturesOfParedObj = {
@@ -106,7 +109,10 @@ export default async function handler(
           const name = myObj['0'].AttrName;
           const val = myObj['0'].values[idx];
           const meta = { trait_type: name, value: val };
-          const aImg : Promise<Uint8Array> = new Promise(res=>res(file));
+
+          //image part
+          // const aImg : any = new Uint8Array(Object.values(file));
+          const aImg: any = file;
 
           return { imgBuffer: aImg, meta: [meta] };
         })
@@ -168,38 +174,45 @@ export default async function handler(
         imgObj['index'] = idx;
         return imgObj;
       })
-      
-      const dbMetaItem =
-      dataArr.map((e, idx) => {
-        const metaObj: { [idx: string]: any } = {};
-        metaObj['index'] = idx;
-        metaObj[`object`] =
+    myClient.db(`${myObj.projectName}`).collection('img').insertMany(dbImgItem);
+
+
+    //메타데이터 디렉토리 생성
+    fs.mkdirSync(`./pages/api/fs/${myObj.projectName}/img/`, { recursive: true })
+    fs.mkdirSync(`./pages/api/fs/${myObj.projectName}/meta/`, { recursive: true })
+
+
+    const writefs = dataArr.map((e, idx) => {
+      fs.writeFileSync(`./pages/api/fs/${myObj.projectName}/img/${idx}`, e.imgBuffer)
+      const json = JSON.stringify(
         {
           description: myObj.description,
           external_url: myObj.external_url,
           image: `${siteURL}/api/fs/${myObj.projectName}/img/${idx}`,
           name: `${myObj.symbol[0]}#${idx}`,
           attributes: e.meta
-        }
-        return metaObj;
-      })
-      myClient.db(`${myObj.projectName}`).collection('meta').insertMany(dbMetaItem).then(dbres=>{
-        if (!dbres.acknowledged) { throw "db error"}
-      })
-      
-      const isImgDone = Promise.all(promiseArr).then( x=>
-        myClient.db(`${myObj.projectName}`).collection('img').insertMany(dbImgItem).then(dbres=>{
-          if (!dbres.acknowledged) { throw "db error"}
         })
-      )
+      fs.writeFileSync(`./pages/api/fs/${myObj.projectName}/meta/${idx}`, json)
+    })
 
-    await isImgDone;
-    await isContractDone;
+    if (writefs) {
 
-    res.send({message : true})
+      const ipfs = await mkIPFS(myObj.projectName) // make ipfs hash
+
+      await setURI('ipfs://' + ipfs + '/', contractAddress)
+
+      //메타데이터 디렉토리삭제 
+      fs.rmdirSync(`./pages/api/fs/${myObj.projectName}`, { recursive: true })
+
+      res.send({ message: true });
+
+      return;
+    }
 
 
 
+
+    res.send({ message: "db error" })
   }
   else { res.send({ message: 'wrong access' }) }
 
